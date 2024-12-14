@@ -1,0 +1,51 @@
+input_features:
+  - name: image_path
+    type: image
+    num_channels: 3
+    preprocessing:
+      normalization: true
+      resize_method: crop_or_pad
+      height: 2500
+      width: 2500
+      stain_normalization: true  # Custom normalization for histology
+      augmentation:
+        random_horizontal_flip: true
+        random_vertical_flip: true
+        random_rotate:
+          degree: 10
+        random_brightness:
+          min: 0.8
+          max: 1.2
+        random_contrast:
+          min: 0.8
+          max: 1.2
+
+    encoder:
+      type: vgg
+      architecture: vgg16       # Pretrained VGG16 architecture
+      pretrained: true
+      freeze_layers: 10         # Freezing lower, generic layers
+      trainable_layers: 6       # Fine-tuning intermediate and upper layers
+      reduce_output: false      # Preserve intermediate layer output
+      output_layer_index: 4     # Extract features from the fourth layer
+
+output_features:
+  - name: er_status_by_ihc
+    type: binary
+    # No decoder type specified—binary is handled automatically
+
+trainer:
+  epochs: 50
+  batch_size: 4                 # Smaller batch size for high-resolution images
+  learning_rate: 0.0001
+  optimizer:
+    type: adam
+  learning_rate_scheduler:
+    type: reduce_on_plateau
+    metric: accuracy
+    patience: 5
+    reduce_rate: 0.5
+  validation_field: er_status_by_ihc
+  validation_metric: accuracy
+  early_stop: 10
+
