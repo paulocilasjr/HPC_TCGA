@@ -11,27 +11,29 @@ def main():
         print(f"Error: File '{input_file}' not found.")
         sys.exit(1)
 
-    # Step 2: Group by 'sample' column and count the occurrences
+    # Step 2: Group by 'sample' column and count occurrences
     if 'sample' not in df.columns:
         print("Error: Column 'sample' not found in the CSV file.")
         sys.exit(1)
 
     sample_counts = df['sample'].value_counts()
 
-    # Step 3: Plot the distribution of the total number of repeats using a horizontal bar plot
-    plt.figure(figsize=(10, 6))
-    repeat_counts = sample_counts.value_counts().sort_index()  # Frequency of repeats
+    # Step 3: Create a scatter plot for each data point
+    plt.figure(figsize=(14, 8))  # Set the size of the figure
+    x = list(range(1, len(sample_counts) + 1))  # X-axis: Sample indices
+    y = sample_counts.values  # Y-axis: Count of occurrences per sample
 
-    plt.barh(repeat_counts.index, repeat_counts.values, color='skyblue', edgecolor='black')
+    plt.scatter(x, y, color='blue', alpha=0.6, edgecolors='black')  # Scatter plot with dots
 
     # Customize plot
-    plt.title("Distribution of sample tiles in dataset")
-    plt.ylabel("Number of tiles")
-    plt.xlabel("Frequency")
-    plt.grid(axis='x', linestyle='--', alpha=0.7)
+    plt.title("Sample Tiles Distribution in Dataset")
+    plt.xlabel("Samples (Ordered by Count)")
+    plt.ylabel("Number of Tiles per Sample")
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.xticks([])  # Remove x-axis ticks since sample names are not shown
 
     # Save the figure
-    output_file = "sample_repeats_distribution_no_white.png"
+    output_file = "sample_repeats_scatter_no_white.png"
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     print(f"Graph saved as '{output_file}'.")
 
