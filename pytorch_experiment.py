@@ -9,7 +9,7 @@ import pandas as pd
 from PIL import Image
 import hashlib
 
-print("it started")
+print("Starting the script", flush=True)
 
 # Custom Dataset for image data
 class CustomImageDataset(Dataset):
@@ -22,7 +22,7 @@ class CustomImageDataset(Dataset):
         return len(self.image_paths)
 
     def __getitem__(self, idx):
-        image = load_image(self.image_paths[idx])  # Load image using the defined function
+        image = load_image(self.image_paths[idx])
         label = self.labels[idx]
         if self.transform:
             image = self.transform(image)
@@ -32,10 +32,10 @@ class CustomImageDataset(Dataset):
 def load_image(image_path):
     """Load an image from a file path."""
     try:
-        image = Image.open(image_path).convert("RGB")  # Ensure 3-channel RGB
+        image = Image.open(image_path).convert("RGB")
         return image
     except Exception as e:
-        print(f"Error loading image {image_path}: {e}")
+        print(f"Error loading image {image_path}: {e}", flush=True)
         raise
 
 # Define the transformations and augmentations
@@ -51,7 +51,8 @@ augmentation_transforms = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-print("loading files")
+print("Loading dataset", flush=True)
+
 # Load dataset from CSV
 data_file = "er_status_no_white.csv"
 df = pd.read_csv(data_file)
@@ -61,15 +62,14 @@ image_paths = df['image_path'].tolist()
 labels = df['er_status_by_ihc'].tolist()
 samples = df['sample'].tolist()
 
-print(f"Loaded {len(image_paths)} images with labels.")
+print(f"Loaded {len(image_paths)} images with labels.", flush=True)
 
 # Create a hash-based split function
 def hash_split(samples, train_ratio=0.7, val_ratio=0.1):
     train_indices, val_indices, test_indices = [], [], []
     for idx, sample in enumerate(samples):
-        # Use a hash function to create consistent splits
         sample_hash = int(hashlib.md5(sample.encode('utf-8')).hexdigest(), 16)
-        split_value = sample_hash % 100  # Scale hash value to range 0-99
+        split_value = sample_hash % 100
 
         if split_value < train_ratio * 100:
             train_indices.append(idx)
@@ -78,6 +78,8 @@ def hash_split(samples, train_ratio=0.7, val_ratio=0.1):
         else:
             test_indices.append(idx)
     return train_indices, val_indices, test_indices
+
+print("Splitting dataset", flush=True)
 
 # Apply hash-based splitting
 train_indices, val_indices, test_indices = hash_split(samples)
@@ -92,7 +94,7 @@ train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=4)
 test_loader = DataLoader(test_dataset, batch_size=4)
 
-print("define model")
+print("Defining model", flush=True)
 
 # Define model
 model = models.resnet50()
@@ -128,7 +130,7 @@ def compute_metrics(labels, preds, loss):
         "Specificity": specificity
     }
 
-print("training")
+print("Starting training", flush=True)
 
 # Training loop
 epochs = 50
@@ -138,6 +140,7 @@ early_stop_counter = 0
 metrics_log = []
 
 for epoch in range(epochs):
+    print(f"Epoch {epoch + 1}/{epochs}", flush=True)
     model.train()
     running_loss = 0.0
     all_preds, all_labels = [], []
@@ -158,7 +161,7 @@ for epoch in range(epochs):
 
     train_loss = running_loss / len(train_loader)
     train_metrics = compute_metrics(all_labels, all_preds, train_loss)
-    print(f"Epoch {epoch + 1}/{epochs}, Train Metrics: {train_metrics}")
+    print(f"Train Metrics: {train_metrics}", flush=True)
 
     # Validation
     model.eval()
@@ -176,7 +179,7 @@ for epoch in range(epochs):
 
     val_loss /= len(val_loader)
     val_metrics = compute_metrics(val_labels, val_preds, val_loss)
-    print(f"Validation Metrics: {val_metrics}")
+    print(f"Validation Metrics: {val_metrics}", flush=True)
 
     metrics_log.append({
         "Epoch": epoch + 1,
@@ -190,11 +193,14 @@ for epoch in range(epochs):
         best_val_acc = val_metrics["Accuracy"]
         early_stop_counter = 0
         torch.save(model.state_dict(), "best_model.pth")
+        print("Best model saved.", flush=True)
     else:
         early_stop_counter += 1
         if early_stop_counter >= early_stop_patience:
-            print("Early stopping triggered.")
+            print("Early stopping triggered.", flush=True)
             break
+
+print("Evaluating on test data", flush=True)
 
 # Test evaluation
 model.load_state_dict(torch.load("best_model.pth"))
@@ -213,5 +219,17 @@ with torch.no_grad():
 
 test_loss /= len(test_loader)
 test_metrics = compute_metrics(test_labels, test_preds, test_loss)
-print(f"Test Metrics: {test_metrics}")
+print(f"Test Metrics: {test_metrics}", flush=True)
 
+# Save metrics to a file
+print("Saving metrics to a file", flush=True)
+output_file = "pytorch_h_outputs.txt"
+with open(output_file, "w") as f:
+    f.write("Training, Validation, and Test Metrics:\n\n")
+    for entry in metrics_log:
+        f.write(f"Epoch {entry['Epoch']}:\n")
+        f.write(f"Train Metrics: {entry['Train']}\n")
+        f.write(f"Validation Metrics: {entry['Validation']}\n")
+    f.write(f"Test Metrics: {test_metrics}\n")
+
+print("Script completed successfully", flush=True)
