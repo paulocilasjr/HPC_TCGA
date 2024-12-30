@@ -4,7 +4,7 @@ import torch.optim as optim
 from torchvision import transforms, models
 from torch.utils.data import DataLoader, Dataset, Subset
 from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_auc_score, confusion_matrix
-from sklearn.model_selection import train_test_split  # Importing for random split
+from sklearn.model_selection import train_test_split
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -42,38 +42,58 @@ def load_image(image_path):
 # Define the transformations and augmentations
 augmentation_transforms = transforms.Compose([
     transforms.RandomHorizontalFlip(),
-    transforms.RandomVerticalFlip(),
     transforms.RandomRotation(15),
-    transforms.ColorJitter(brightness=(0.7, 1.3), contrast=(0.7, 1.3)),
-    transforms.GaussianBlur(kernel_size=3),
-    transforms.Resize((2500, 2500)),
+    transforms.Resize((224, 224)),  # Standard ResNet input size
     transforms.ToTensor(),
-    transforms.RandomApply([transforms.Lambda(lambda x: x + torch.randn_like(x) * 0.1)], p=0.5),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
 print("Loading dataset", flush=True)
-
 # Load dataset from CSV
 data_file = "er_status_no_white.csv"
 df = pd.read_csv(data_file)
 
 # Extract the required columns
 image_paths = df['image_path'].tolist()
-labels = df['er_status_by_ihc'].tolist()
+labels = df['er_status_by_ihc'].astype(float).tolist()  # Convert labels to float
 samples = df['sample'].tolist()
 
 print(f"Loaded {len(image_paths)} images with labels.", flush=True)
 
-# Randomly split dataset into train, validation, and test sets
-print("Splitting dataset", flush=True)
+# Hash-based split function
+def hash_split(indices, train_size, val_size, test_size, seed=42):
+    """Hash-based splitting of the dataset into train, validation, and test sets."""
+    np.random.seed(seed)  # Set seed for reproducibility
+    split_dict = {'train': [], 'val': [], 'test': []}
 
-# First, split into training (70%) and temp (30%) for validation and test
-train_indices, temp_indices = train_test_split(range(len(samples)), train_size=0.7, random_state=42)
-# Then split the temp set into validation (10%) and test (20%)
-val_indices, test_indices = train_test_split(temp_indices, train_size=0.333, random_state=42)  # 0.333 of 30% gives us 10%
+    # Use a hash function to determine the split
+    for idx in indices:
+        hash_value = int(hashlib.md5(str(idx).encode('utf-8')).hexdigest(), 16)  # Get hash value
+        total_splits = train_size + val_size + test_size
+        split_value = hash_value % total_splits
+        
+        if split_value < train_size:
+            split_dict['train'].append(idx)
+        elif split_value < train_size + val_size:
+            split_dict['val'].append(idx)
+        else:
+            split_dict['test'].append(idx)
+    
+    return split_dict['train'], split_dict['val'], split_dict['test']
 
-# Print the size of each split group
+# Change the split sizes to 70%, 10%, 20%
+train_size = int(len(samples) * 0.7)
+val_size = int(len(samples) * 0.1)
+test_size = len(samples) - train_size - val_size  # Ensure the sizes add up to total dataset length
+
+print(f"Dataset split sizes: Train: {train_size}, Validation: {val_size}, Test: {test_size}", flush=True)
+
+# Get indices for the entire dataset
+indices = list(range(len(samples)))
+
+# Perform hash-based split
+train_indices, val_indices, test_indices = hash_split(indices, train_size, val_size, test_size)
+
 print(f"Training set size: {len(train_indices)} samples", flush=True)
 print(f"Validation set size: {len(val_indices)} samples", flush=True)
 print(f"Test set size: {len(test_indices)} samples", flush=True)
@@ -84,14 +104,14 @@ train_dataset = Subset(dataset, train_indices)
 val_dataset = Subset(dataset, val_indices)
 test_dataset = Subset(dataset, test_indices)
 
-train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=4)
-test_loader = DataLoader(test_dataset, batch_size=4)
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=32)
+test_loader = DataLoader(test_dataset, batch_size=32)
 
 print("Defining model", flush=True)
 
 # Define model
-model = models.resnet50()
+model = models.resnet50(pretrained=False)
 weights_path = "resnet50-0676ba61.pth"
 model.load_state_dict(torch.load(weights_path, map_location=torch.device('cpu')))
 model.fc = nn.Sequential(
@@ -99,22 +119,28 @@ model.fc = nn.Sequential(
     nn.Sigmoid()
 )
 
-device = torch.device('cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = model.to(device)
 
-# Define loss and optimizer
+# Loss and optimizer
 criterion = nn.BCELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.0001)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
+optimizer = optim.AdamW(model.parameters(), lr=1e-4)
+scheduler = optim.lr_scheduler.OneCycleLR(
+    optimizer,
+    max_lr=1e-3,
+    steps_per_epoch=len(train_loader),
+    epochs=10
+)
 
 # Metrics function
 def compute_metrics(labels, preds, loss):
+    labels, preds = np.array(labels), np.array(preds)
     accuracy = accuracy_score(labels, preds)
     precision = precision_score(labels, preds, zero_division=0)
     recall = recall_score(labels, preds, zero_division=0)
     roc_auc = roc_auc_score(labels, preds) if len(np.unique(labels)) > 1 else np.nan
-    tn, fp, fn, tp = confusion_matrix(labels, preds).ravel()
-    specificity = tn / (tn + fp)
+    tn, fp, fn, tp = confusion_matrix(labels, preds, labels=[0, 1]).ravel()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else np.nan
     return {
         "Accuracy": accuracy,
         "Loss": loss,
@@ -127,7 +153,7 @@ def compute_metrics(labels, preds, loss):
 print("Starting training", flush=True)
 
 # Training loop
-epochs = 50
+epochs = 10
 early_stop_patience = 10
 best_val_acc = 0
 early_stop_counter = 0
@@ -181,7 +207,7 @@ for epoch in range(epochs):
         "Validation": val_metrics
     })
 
-    scheduler.step(val_metrics["Accuracy"])
+    scheduler.step()
 
     if val_metrics["Accuracy"] > best_val_acc:
         best_val_acc = val_metrics["Accuracy"]
