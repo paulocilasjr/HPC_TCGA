@@ -106,96 +106,105 @@ def convert_embedding_to_string(embedding):
     return " ".join(map(str, embedding))
 
 # Function to Create Bags from Split Data
-def create_bags_from_split(split_data, split):
+def create_bags_from_split(split_data, split, repeats):
     print("inside create bags from split function", flush=True)
     bags = []
     images = []
+    bag_set = set()
 
     # Collect all images for the current split
     for _, row in split_data.iterrows():
         image_path = row["image_path"]
-        embedding = extract_resnet_embedding(image_path, transform, resnet_model)
+        embedding = extract_resnet_embedding(image_path)
         images.append((embedding, row["er_status_by_ihc"], row["sample"]))
+    
+    for _ in range(repeats):
+        images_0 = [image for image in images if image[1] == 0]
+        images_1 = [image for image in images if image[1] == 1]
 
-    images_0 = [image for image in images if image[1] == 0]
-    images_1 = [image for image in images if image[1] == 1]
+        # Ensure randomness by shuffling both groups
+        np.random.shuffle(images_0)
+        np.random.shuffle(images_1)
 
-    # Ensure randomness by shuffling both groups
-    np.random.shuffle(images_0)
-    np.random.shuffle(images_1)
+        make_bag_1 = True
 
-    make_bag_1 = True
-
-    # Continue until all images are used
-    while len(images_0) + len(images_1) > 0:
-
-        # Determine random bag size between 3 and 7
-        bag_size = np.random.randint(3, 8)
-        if make_bag_1 and len(images_1) > 0:
-            print("TURN = 1", flush = True)
-            if len(images_0) > 0:
-                num_1_tiles = np.random.randint(1, bag_size)
-            else:
-                num_1_tiles = bag_size
-
-            selected_images_1 = images_1[:num_1_tiles]
-            images_1 = images_1[num_1_tiles:]  # Remove selected images
-
-            # Fill the rest of the bag with images_0
-            num_0_tiles = min(bag_size - num_1_tiles, len(images_0))
-            selected_images_0 = images_0[:num_0_tiles]
-            images_0 = images_0[num_0_tiles:]
-            selected_images_0 = images_0
-            images_0 = []
-
-            make_bag_1 = False
-            # Combine selected images to form the bag
-            bag_images = selected_images_1 + selected_images_0
-
-            if len(bag_images) != bag_size:
-                num_extra_tiles = bag_size - len(bag_images)
-                selected_images_extra = images_1[:num_extra_tiles]
-                images_1 = images_1[num_extra_tiles:]
+        # Continue until all images are used
+        while len(images_0) + len(images_1) > 0:
+            # Determine random bag size between 3 and 7
+            bag_size = np.random.randint(3, 8)
+            if make_bag_1 and len(images_1) > 0:
+                print("TURN = 1")    
+                if len(images_0) > 0:
+                    num_1_tiles = np.random.randint(1, bag_size + 1)
+                else:
+                    num_1_tiles = bag_size
+                
+                selected_images_1 = images_1[:num_1_tiles]
+                images_1 = images_1[num_1_tiles:]  # Remove selected images
+                    
+                # Fill the rest of the bag with images_0
+                num_0_tiles = min(bag_size - num_1_tiles, len(images_0))
+                selected_images_0 = images_0[:num_0_tiles]
+                images_0 = images_0[num_0_tiles:]
+                    
+                make_bag_1 = False
                 # Combine selected images to form the bag
-                bag_images += selected_images_extra
+                bag_images = selected_images_1 + selected_images_0
+                if len(bag_images) != bag_size:
+                    num_extra_tiles = bag_size - len(bag_images)
+                    selected_images_extra = images_1[:num_extra_tiles]
+                    images_1 = images_1[num_extra_tiles:]
+                        
+                    # Combine selected images to form the bag
+                    bag_images += selected_images_extra
 
-        elif not make_bag_1 and len(images_0) > 0:
-            print("TURN = 0", flush = True)
-            num_0_tiles = bag_size
-            selected_images_0 = images_0[:num_0_tiles]
-            images_0 = images_0[num_0_tiles:]
-            selected_images_1 = []
-            make_bag_1 = True
-            bag_images = selected_images_0
-        
-        else:
-            make_bag_1 = not make_bag_1
-            bag_images = [] 
-        
-        if len(bag_images) > 0:
-            # Extract data for bag-level representation
-            bag_image_embeddings = [x[0] for x in bag_images]
-            bag_labels = [x[1] for x in bag_images]
-            bag_samples = [x[2] for x in bag_images]
+            elif not make_bag_1 and len(images_0) > 0:
+                print("TURN = 0")
+                num_0_tiles = bag_size
+                selected_images_0 = images_0[:num_0_tiles]
+                print(f"Num of tiles 0 taken: {num_0_tiles}")
+                images_0 = images_0[num_0_tiles:]
+                selected_images_1 = []
+                make_bag_1 = True
+                bag_images = selected_images_0
+            
+            else:
+                print("it is going to pass")
+                make_bag_1 = not make_bag_1
+                bag_images = [] 
 
-            # Aggregate images into a single embedding using max pooling
-            aggregated_embedding = aggregate_embeddings_with_max_pooling(np.array(bag_image_embeddings))
+            if len(bag_images) > 0:
+                # Extract data for bag-level representation
+                bag_image_embeddings = [x[0] for x in bag_images]
+                bag_labels = [x[1] for x in bag_images]
+                bag_samples = [x[2] for x in bag_images]
 
-            # Convert the aggregated embedding to a string for the DataFrame
-            embedding_string = convert_embedding_to_string(aggregated_embedding)
+                # Aggregate images into a single embedding using max pooling
+                aggregated_embedding = aggregate_embeddings_with_max_pooling(np.array(bag_image_embeddings))
 
-            # Bag-level label (if any image has label 1, the bag label is 1)
-            bag_label = int(any(np.array(bag_labels) == 1))
+                # Convert the aggregated embedding to a string for the DataFrame
+                embedding_string = convert_embedding_to_string(aggregated_embedding)
 
-            # Add the bag information to the records
-            bags.append({
-                "embedding": embedding_string,
-                "bag_label": bag_label,
-                "split": split,
-                "bag_size": len(bag_images),
-                "bag_samples": bag_samples,
-            })
+                # Bag-level label (if any image has label 1, the bag label is 1)
+                bag_label = int(any(np.array(bag_labels) == 1))
 
+                bag_image_embeddings_tuple = tuple(map(tuple, bag_image_embeddings)) 
+                bag_samples_tuple = tuple(bag_samples)
+                bag_key = (bag_image_embeddings_tuple, len(bag_images), bag_samples_tuple)
+
+                if bag_key not in bag_set:
+                    bag_set.add(bag_key)
+
+                    # Add the bag information to the records
+                    bags.append({
+                        "embedding": bag_image_embeddings,
+                        "bag_label": bag_label,
+                        "split": split,
+                        "bag_size": len(bag_images),
+                        "bag_samples": bag_samples
+                    })
+                else:
+                    print("A bag was created twice", flush = True)
     return bags
 
 
