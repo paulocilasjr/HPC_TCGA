@@ -7,11 +7,10 @@ import torch
 from torchvision import models, transforms
 from sklearn.preprocessing import StandardScaler
 
-dataset_array = ["image_embeddings_mil_13.csv", "image_embeddings_mil_14.csv"]
 
 
 # Updated Paths and Constants
-OUTPUT_CSV = "image_embeddings_mil_6.csv"
+OUTPUT_CSV = "image_embeddings_mil_13"
 IMG_SIZE = (224, 224)  # Image size for Ludwig
 EMBEDDING_SIZE = 1000  # Fixed size for all embeddings, you can adjust this based on the model
 
@@ -21,6 +20,7 @@ def LoadDataset (dataset_type):
         dataset = pd.read_csv("./../er_status_all_data.csv")
     if dataset_type == "no_white":
         dataset = pd.read_csv("./../er_status_no_white.csv")
+    return dataset
 
 def UniqueSamples (load_data):
 
@@ -29,7 +29,7 @@ def UniqueSamples (load_data):
     unique_samples = load_data["sample"].unique()
     num_samples = len(unique_samples)
     print(f"this is the length of unique samples: {num_samples}", flush=True)
-    return unique_samples, num_samples 
+    return unique_samples, num_samples
 
 def SplitData (unique_samples, num_samples, data):
     # Generate random splits for samples
@@ -54,15 +54,15 @@ def SplitData (unique_samples, num_samples, data):
 
     return data, train_samples, val_samples, test_samples 
 
-def ModelExtractor(Model_name=None):
+def ModelExtractor():
     # ResNet Model Setup for Embedding Extraction
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     resnet = models.resnet50(pretrained=False).to(device)
     weights_path = "./../resnet50-0676ba61.pth"
     resnet.load_state_dict(torch.load(weights_path, map_location=device))
     resnet.eval()   
-    
-    #return resnet
+
+    return resnet
 
 def TransformInitiation():
     # Preprocessing Transformations
@@ -75,7 +75,7 @@ def TransformInitiation():
     return transform
 
 # Function to Create ResNet Embeddings from Image
-def extract_resnet_embedding(image_path):
+def extract_resnet_embedding(image_path, transform, resnet):
     image = Image.open(image_path).convert("RGB")
     image = transform(image).unsqueeze(0).to(device)
 
@@ -105,18 +105,6 @@ def convert_embedding_to_string(embedding):
     embedding = np.nan_to_num(embedding)  # Replace NaNs with zero
     return " ".join(map(str, embedding))
 
-# Function to Balance Bags
-def balance_bags(bags):
-    bags_0 = [bag for bag in bags if bag["bag_label"] == 0]
-    bags_1 = [bag for bag in bags if bag["bag_label"] == 1]
-    min_count = min(len(bags_0), len(bags_1))
-    balanced_bags_0 = np.random.choice(bags_0, min_count, replace=False).tolist()
-    balanced_bags_1 = np.random.choice(bags_1, min_count, replace=False).tolist()
-    balanced_bags = balanced_bags_0 + balanced_bags_1
-    np.random.shuffle(balanced_bags)
-    return balanced_bags
-
-#####
 # Function to Create Bags from Split Data
 def create_bags_from_split(split_data, split):
     print("inside create bags from split function", flush=True)
@@ -126,47 +114,102 @@ def create_bags_from_split(split_data, split):
     # Collect all images for the current split
     for _, row in split_data.iterrows():
         image_path = row["image_path"]
-        embedding = extract_resnet_embedding(image_path)
+        embedding = extract_resnet_embedding(image_path, transform, resnet_model)
         images.append((embedding, row["er_status_by_ihc"], row["sample"]))
 
-    # Shuffle images to ensure randomness
-    np.random.shuffle(images)
-    num_images = len(images)
-    i = 0
+    images_0 = [image for image in images if image[1] == 0]
+    images_1 = [image for image in images if image[1] == 1]
 
-    while i < num_images:
+    # Ensure randomness by shuffling both groups
+    np.random.shuffle(images_0)
+    np.random.shuffle(images_1)
+
+    make_bag_1 = True
+
+    # Continue until all images are used
+    while len(images_0) + len(images_1) > 0:
+
         # Determine random bag size between 3 and 7
         bag_size = np.random.randint(3, 8)
+        if make_bag_1 and len(images_1) > 0:
+            print("TURN = 1", flush = True)
+            if len(images_0) > 0:
+                num_1_tiles = np.random.randint(1, bag_size)
+            else:
+                num_1_tiles = bag_size
 
-        # Check if remaining images are fewer than the bag size
-        if i + bag_size > num_images:
-            # Use all remaining images to form the final bag
-            bag_images = images[i:]
-            i = num_images  # End the loop
+            try:
+                selected_images_1 = images_1[:num_1_tiles]
+                images_1 = images_1[num_1_tiles:]  # Remove selected images
+            except:
+                selected_images_1 = images_1
+                images_1 = []
+
+            # Fill the rest of the bag with images_0
+            num_0_tiles = min(bag_size - num_1_tiles, len(images_0))
+            try:    
+                selected_images_0 = images_0[:num_0_tiles]
+                images_0 = images_0[num_0_tiles:]
+            except:
+                selected_images_0 = images_0
+                images_0 = []
+
+            make_bag_1 = False
+            # Combine selected images to form the bag
+            bag_images = selected_images_1 + selected_images_0
+
+            if len(bag_images) != bag_size:
+                num_extra_tiles = bag_size - len(bag_images)
+                try:    
+                    selected_images_extra = images_1[:num_extra_tiles]
+                    images_1 = images_1[num_extra_tiles:]
+                except:
+                    selected_images_1 = images_1
+                    images_1 = []
+                # Combine selected images to form the bag
+                bag_images += selected_images_extra
+
+        elif not make_bag_1 and len(images_0) > 0:
+            print("TURN = 0", flush = True)
+            try:
+                num_0_tiles = bag_size
+                selected_images_0 = images_0[:num_0_tiles]
+                images_0 = images_0[num_0_tiles:]
+            except:
+                selected_images_0 = images_0
+                images_0 = []
+
+            selected_images_1 = []
+            make_bag_1 = True
+            bag_images = selected_images_0
+        
         else:
-            # Create a bag with the selected size
-            bag_images = images[i:i + bag_size]
-            i += bag_size
+            make_bag_1 = not make_bag_1
+            bag_images = [] 
+        
+        if len(bag_images) > 0:
+            # Extract data for bag-level representation
+            bag_image_embeddings = [x[0] for x in bag_images]
+            bag_labels = [x[1] for x in bag_images]
+            bag_samples = [x[2] for x in bag_images]
 
-        bag_image_embeddings = [x[0] for x in bag_images]
-        bag_labels = [x[1] for x in bag_images]
-        bag_samples = [x[2] for x in bag_images]
+            # Aggregate images into a single embedding using max pooling
+            aggregated_embedding = aggregate_embeddings_with_max_pooling(np.array(bag_image_embeddings))
 
-        # Aggregate images into a single embedding using max pooling
-        aggregated_embedding = aggregate_embeddings_with_max_pooling(np.array(bag_image_embeddings))
+            # Convert the aggregated embedding to a string for the DataFrame
+            embedding_string = convert_embedding_to_string(aggregated_embedding)
 
-        # Convert the aggregated embedding to a string for the DataFrame
-        embedding_string = convert_embedding_to_string(aggregated_embedding)
+            # Bag-level label (if any image has label 1, the bag label is 1)
+            bag_label = int(any(np.array(bag_labels) == 1))
 
-        # Bag-level label (if any image has label 1, the bag label is 1)
-        bag_label = int(any(np.array(bag_labels) == 1))
-
-        # Add the bag information to the records
-        bags.append({
-            "embedding": embedding_string,
-            "bag_label": bag_label,
-            "split": split,
-        })
+            # Add the bag information to the records
+            bags.append({
+                "embedding": embedding_string,
+                "bag_label": bag_label,
+                "split": split,
+                "bag_size": len(bag_images),
+                "bag_samples": bag_samples,
+            })
 
     return bags
 
@@ -184,10 +227,10 @@ for dataset in ["all_data", "no_white"]:
         print(f"create bags for: {split}", flush=True)
         split_data = data[data["sample"].isin(split_samples)]
         split_bags = create_bags_from_split(split_data, split)
-        balanced_split_bags = balance_bags(split_bags)
-        all_bags.extend(balanced_split_bags)
+        all_bags.extend(split_bags)
 
     # Save Metadata to CSV
     metadata_df = pd.DataFrame(all_bags)
-    metadata_df.to_csv(OUTPUT_CSV, index=False)
-    print(f"Saved balanced metadata to {OUTPUT_CSV}")
+    output_csv = f"{OUTPUT_CSV}_{dataset}.csv"
+    metadata_df.to_csv(output_csv, index=False)
+    print(f"Saved balanced metadata to {output_csv}")
