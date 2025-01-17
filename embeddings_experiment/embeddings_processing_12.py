@@ -7,10 +7,8 @@ import torch
 from torchvision import models, transforms
 from sklearn.preprocessing import StandardScaler
 
-
-
 # Updated Paths and Constants
-OUTPUT_CSV = "image_embeddings_mil_13"
+OUTPUT_CSV = "image_embeddings_mil_13_repeats_5"
 IMG_SIZE = (224, 224)  # Image size for Ludwig
 EMBEDDING_SIZE = 1000  # Fixed size for all embeddings, you can adjust this based on the model
 
@@ -23,7 +21,6 @@ def LoadDataset (dataset_type):
     return dataset
 
 def UniqueSamples (load_data):
-
     # Assign Split Randomly at the Sample Level
     np.random.seed(42)  # Set a seed for reproducibility
     unique_samples = load_data["sample"].unique()
@@ -52,17 +49,7 @@ def SplitData (unique_samples, num_samples, data):
     # Add split column to the DataFrame
     data["split"] = data["sample"].map(sample_to_split)
 
-    return data, train_samples, val_samples, test_samples 
-
-def ModelExtractor():
-    # ResNet Model Setup for Embedding Extraction
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    resnet = models.resnet50(pretrained=False).to(device)
-    weights_path = "./../resnet50-0676ba61.pth"
-    resnet.load_state_dict(torch.load(weights_path, map_location=device))
-    resnet.eval()   
-
-    return resnet
+    return data, train_samples, val_samples, test_samples
 
 def TransformInitiation():
     # Preprocessing Transformations
@@ -207,19 +194,26 @@ def create_bags_from_split(split_data, split, repeats, transform, resnet):
                     print("A bag was created twice", flush = True)
     return bags
 
+# ResNet Model Setup for Embedding Extraction
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+resnet = models.resnet50(pretrained=False).to(device)
+weights_path = "./../resnet50-0676ba61.pth"
+resnet.load_state_dict(torch.load(weights_path, map_location=device))
+resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
+resnet.eval()
+
 # Create Bags for All Splits
 for dataset in ["all_data", "no_white"]:
     data = LoadDataset(dataset)
     unique_samples, num_samples = UniqueSamples(data)
     data, train_samples, val_samples, test_samples = SplitData (unique_samples, num_samples, data)
-    resnet_model = ModelExtractor()
     transform = TransformInitiation()
 
     all_bags = []
     for split, split_samples in [(0, train_samples), (1, val_samples), (2, test_samples)]:
         print(f"create bags for: {split}", flush=True)
         split_data = data[data["sample"].isin(split_samples)]
-        split_bags = create_bags_from_split(split_data, split)
+        split_bags = create_bags_from_split(split_data, split, 5, transform, resnet)
         all_bags.extend(split_bags)
 
     # Save Metadata to CSV
