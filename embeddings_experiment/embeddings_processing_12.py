@@ -138,21 +138,15 @@ def create_bags_from_split(split_data, split):
             else:
                 num_1_tiles = bag_size
 
-            try:
-                selected_images_1 = images_1[:num_1_tiles]
-                images_1 = images_1[num_1_tiles:]  # Remove selected images
-            except:
-                selected_images_1 = images_1
-                images_1 = []
+            selected_images_1 = images_1[:num_1_tiles]
+            images_1 = images_1[num_1_tiles:]  # Remove selected images
 
             # Fill the rest of the bag with images_0
             num_0_tiles = min(bag_size - num_1_tiles, len(images_0))
-            try:    
-                selected_images_0 = images_0[:num_0_tiles]
-                images_0 = images_0[num_0_tiles:]
-            except:
-                selected_images_0 = images_0
-                images_0 = []
+            selected_images_0 = images_0[:num_0_tiles]
+            images_0 = images_0[num_0_tiles:]
+            selected_images_0 = images_0
+            images_0 = []
 
             make_bag_1 = False
             # Combine selected images to form the bag
@@ -160,25 +154,16 @@ def create_bags_from_split(split_data, split):
 
             if len(bag_images) != bag_size:
                 num_extra_tiles = bag_size - len(bag_images)
-                try:    
-                    selected_images_extra = images_1[:num_extra_tiles]
-                    images_1 = images_1[num_extra_tiles:]
-                except:
-                    selected_images_1 = images_1
-                    images_1 = []
+                selected_images_extra = images_1[:num_extra_tiles]
+                images_1 = images_1[num_extra_tiles:]
                 # Combine selected images to form the bag
                 bag_images += selected_images_extra
 
         elif not make_bag_1 and len(images_0) > 0:
             print("TURN = 0", flush = True)
-            try:
-                num_0_tiles = bag_size
-                selected_images_0 = images_0[:num_0_tiles]
-                images_0 = images_0[num_0_tiles:]
-            except:
-                selected_images_0 = images_0
-                images_0 = []
-
+            num_0_tiles = bag_size
+            selected_images_0 = images_0[:num_0_tiles]
+            images_0 = images_0[num_0_tiles:]
             selected_images_1 = []
             make_bag_1 = True
             bag_images = selected_images_0
