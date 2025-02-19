@@ -2,13 +2,11 @@
 This module provides functionality to extract
 image embeddings using a specified
 pretrained model from the torchvision library.
-
 It includes functions to:
 - Load and process images from a ZIP file.
 - Apply model-specific preprocessing and transformations.
 - Extract embeddings using various models.
 - Save the resulting embeddings into a CSV file.
-
 Modules required:
 - argparse: For command-line argument parsing.
 - os, csv, zipfile: For file handling (ZIP file extraction, CSV writing).
@@ -104,37 +102,23 @@ for model, settings in MODEL_DEFAULTS.items():
 
 
 def extract_zip(zip_file):
-    """Extracts a ZIP file while preserving the folder structure, only for image files."""
-    # Define known image extensions
-    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp', '.svs',
-                        'tif', 'tiff')
+    """Extracts a ZIP file into a writable directory."""
 
+    # Use a writable temp directory
     output_dir = tempfile.mkdtemp(prefix="extracted_zip_")
     try:
-        sample_name = []
         file_list = []
-        zip_filename = os.path.splitext(os.path.basename(zip_file))[0]
-
         with zipfile.ZipFile(zip_file, 'r') as zip_ref:
             zip_ref.extractall(output_dir)
-            for file in zip_ref.namelist():
-                if not file.endswith('/') and file.lower().endswith(image_extensions):
-                    try:
-                        pattern = re.escape(zip_filename) + r"/(.*)"
-                        match = re.search(pattern, file)
-                        if match:
-                            file_path = match.group(1)
-                            file_list.append(file)
-                            sample_name.append(file_path)
-                        else:
-                            raise ValueError(f"File path does not match the expected format: {file}")
-                    except (re.error, ValueError) as match_error:
-                        # Handle the error if the regex fails or the match is not found
-                        logging.error(f"Error processing file '{file}': {match_error}")
+            file_list = zip_ref.namelist()
         logging.info(f"ZIP extracted to: {output_dir}")
-        return output_dir, file_list, sample_name
+
+        return output_dir, file_list
+
     except zipfile.BadZipFile as exc:
         raise RuntimeError("Invalid ZIP file.") from exc
+    except Exception as exc:
+        raise RuntimeError("Error extracting ZIP file.") from exc
 
 
 def load_model(model_name, device):
@@ -186,36 +170,21 @@ def process_image(image_path, transform, device, transform_type="rgb"):
             image = Image.fromarray(edges).convert("RGB")
         else:
             image = image.convert("RGB")  # Default is RGB conversion
+
         return transform(image).unsqueeze(0).to(device)
+
     except Exception as e:
         logging.warning("Skipping %s: %s", image_path, e)
+
         return None
-
-
-def write_csv(output_csv, list_embeddings, sample_names):
-    """Writes embeddings and sample names to a CSV file."""
-    with open(output_csv, mode="w", encoding='utf-8', newline='') as csv_file:
-        csv_writer = csv.writer(csv_file)
-        if list_embeddings:
-            header = ["sample_name"] + [f"vector{i + 1}" for i in range(len(list_embeddings[0]))]
-            csv_writer.writerow(header)
-
-            # Write the rows, combining sample names and embeddings
-            for sample_name, embedding in zip(sample_names, list_embeddings):
-                row = [sample_name] + embedding
-                csv_writer.writerow(row)
-            logging.info("CSV created")
-        else:
-            # If no embeddings, create an empty CSV with only sample names
-            csv_writer.writerow(["sample_name"])
-            logging.info("No valid images found. Empty CSV created.")
 
 
 def extract_embeddings(model_name,
                        apply_normalization,
                        output_dir,
                        file_list,
-                       transform_type="rgb"):
+                       transform_type="rgb",
+                       sample_names=[]):
     """Extracts embeddings from images using the specified model."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_model = load_model(model_name, device)
@@ -247,8 +216,45 @@ def extract_embeddings(model_name,
             if input_tensor is None:
                 continue
             embedding = use_model(input_tensor).squeeze().cpu().numpy()
-            list_embeddings.append(embedding.tolist())
+            list_embeddings.append([sample_names] + embedding.tolist())
+
     return list_embeddings
+
+
+def get_names(zip_file, file_list):
+    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp', '.svs',
+                        'tif', 'tiff')
+    zip_filename = os.path.splitext(os.path.basename(zip_file))[0]
+    sample_names = []
+    for file in file_list:
+        if not file.endswith('/') and file.lower().endswith(image_extensions):
+            try:
+                pattern = re.escape(zip_filename) + r"/(.*)"
+                match = re.search(pattern, file)
+                if match:
+                    sample_names.append(match.group(1))
+                else:
+                    raise ValueError(f"File path does not match the expected format: {file}")
+            except (re.error, ValueError) as match_error:
+                logging.error(f"Error processing file '{file}': {match_error}")
+
+    return sample_names
+
+
+def write_csv(output_csv, list_embeddings):
+    """Writes embeddings to a CSV file."""
+    with open(output_csv, mode="w", encoding='utf-8', newline='') as csv_file:
+        csv_writer = csv.writer(csv_file)
+        if list_embeddings:
+            header = ["sample_name"] + [
+                f"vector{i + 1}" for i in range(len(list_embeddings[0]) - 1)
+            ]
+            csv_writer.writerow(header)
+            csv_writer.writerows(list_embeddings)
+            logging.info("CSV created")
+        else:
+            csv_writer.writerow(["sample_name"])
+            logging.info("No valid images found. Empty CSV created.")
 
 
 def main(zip_file,
@@ -258,15 +264,16 @@ def main(zip_file,
          transform_type="rgb"):
     """Main entry point for processing
     the zip file and extracting embeddings."""
-    output_dir, file_list, sample_names = extract_zip(zip_file)
+    output_dir, file_list = extract_zip(zip_file)
     logging.info("ZIP extracted")
 
+    sample_names = get_names(zip_file, file_list)
+
     list_embeddings = extract_embeddings(
-        model_name, apply_normalization, output_dir, 
-        file_list, transform_type)
+        model_name, apply_normalization, output_dir, file_list, transform_type, sample_names)
     logging.info("Embedding extracted")
 
-    write_csv(output_csv, list_embeddings, sample_names)
+    write_csv(output_csv, list_embeddings)
 
 
 if __name__ == "__main__":
