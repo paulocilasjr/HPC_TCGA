@@ -216,7 +216,7 @@ def extract_embeddings(model_name,
             if input_tensor is None:
                 continue
             embedding = use_model(input_tensor).squeeze().cpu().numpy()
-            list_embeddings.append([sample_names] + embedding.tolist())
+            list_embeddings.append(sample_names + embedding.tolist())
 
     return list_embeddings
 
